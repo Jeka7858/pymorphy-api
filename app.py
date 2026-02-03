@@ -1,19 +1,19 @@
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-from typing import List, Dict, Optional
+from typing import List, Dict
 import pymorphy2
 
 morph = pymorphy2.MorphAnalyzer()
 app = FastAPI()
 
-# ---------- request models ----------
-class LemmaRequest(BaseModel):
+# --------- модели запросов ---------
+class LemmaRequestBody(BaseModel):
     tokens: List[str]
 
-class NerRequest(BaseModel):
-    tokens: List[str]  # ты сказал, что у тебя список слов
+class NerTextRequestBody(BaseModel):
+    text: str
 
-# ---------- NER lazy init ----------
+# --------- NER lazy init (чтобы не падал старт) ---------
 _segmenter = None
 _emb = None
 _ner_tagger = None
@@ -27,12 +27,12 @@ def get_ner():
             _emb = NewsEmbedding()
             _ner_tagger = NewsNERTagger(_emb)
         except Exception as e:
-            # покажем реальную причину (например, torch не установлен)
             raise HTTPException(status_code=500, detail=f"NER init failed: {type(e).__name__}: {e}")
     return _segmenter, _ner_tagger
 
+
 @app.post("/lemmatize")
-def lemmatize(data: LemmaRequest):
+def lemmatize(data: LemmaRequestBody):
     result: Dict[str, str] = {}
     for token in data.tokens:
         t = token.lower().replace("ё", "е")
@@ -41,16 +41,15 @@ def lemmatize(data: LemmaRequest):
         result[token] = morph.parse(t)[0].normal_form
     return {"lemmas": result}
 
-@app.post("/ner")
-def ner(data: NerRequest):
-    # из списка токенов делаем текст
-    text = " ".join([t for t in data.tokens if t])
 
+@app.post("/ner")
+def ner(data: NerTextRequestBody):
     try:
         from natasha import Doc
+
         segmenter, ner_tagger = get_ner()
 
-        doc = Doc(text)
+        doc = Doc(data.text)
         doc.segment(segmenter)
         doc.tag_ner(ner_tagger)
 
