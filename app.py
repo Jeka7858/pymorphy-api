@@ -6,30 +6,30 @@ import pymorphy2
 morph = pymorphy2.MorphAnalyzer()
 app = FastAPI()
 
-# --------- модели запросов ---------
 class LemmaRequestBody(BaseModel):
     tokens: List[str]
 
 class NerTextRequestBody(BaseModel):
     text: str
 
-# --------- NER lazy init (чтобы не падал старт) ---------
+# --- NER lazy init ---
 _segmenter = None
 _emb = None
 _ner_tagger = None
+_vocab = None
 
 def get_ner():
-    global _segmenter, _emb, _ner_tagger
+    global _segmenter, _emb, _ner_tagger, _vocab
     if _ner_tagger is None:
         try:
-            from natasha import Segmenter, NewsEmbedding, NewsNERTagger
+            from natasha import Segmenter, NewsEmbedding, NewsNERTagger, MorphVocab
             _segmenter = Segmenter()
             _emb = NewsEmbedding()
             _ner_tagger = NewsNERTagger(_emb)
+            _vocab = MorphVocab()
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"NER init failed: {type(e).__name__}: {e}")
-    return _segmenter, _ner_tagger
-
+    return _segmenter, _ner_tagger, _vocab
 
 @app.post("/lemmatize")
 def lemmatize(data: LemmaRequestBody):
@@ -41,13 +41,12 @@ def lemmatize(data: LemmaRequestBody):
         result[token] = morph.parse(t)[0].normal_form
     return {"lemmas": result}
 
-
 @app.post("/ner")
 def ner(data: NerTextRequestBody):
     try:
         from natasha import Doc
 
-        segmenter, ner_tagger = get_ner()
+        segmenter, ner_tagger, vocab = get_ner()
 
         doc = Doc(data.text)
         doc.segment(segmenter)
@@ -55,7 +54,7 @@ def ner(data: NerTextRequestBody):
 
         entities = []
         for s in doc.spans:
-            s.normalize()
+            s.normalize(vocab)   # <-- ВОТ ЭТО исправляет ошибку
             entities.append({
                 "text": s.text,
                 "type": s.type,   # PER / ORG / LOC
